@@ -22,7 +22,7 @@ except ImportError:
     sys.exit(1)
  
 DATA_DIR = Path(__file__).parent.parent / "data"
-GPKG_PATH = DATA_DIR / "os_open_rivers.gpkg"
+GPKG_PATH = DATA_DIR / "oprvrs_gb.gpkg"
  
 # Rough bounding box for the Dee catchment (lon/lat, WGS84)
 # Covers the river from Bala Lake down to the estuary at Chester
@@ -32,7 +32,7 @@ DEE_BBOX = (-3.6, 52.8, -2.8, 53.3)  # (minx, miny, maxx, maxy)
 def inspect():
     if not GPKG_PATH.exists():
         print(f"File not found: {GPKG_PATH}")
-        print("Save OS Open Rivers GeoPackage to: data/os_open_rivers.gpkg")
+        print("Save OS Open Rivers GeoPackage to: data/oprvrs_gb.gpkg")
         return
  
     print(f"\nFile: {GPKG_PATH} ({GPKG_PATH.stat().st_size / 1e6:.1f} MB)")
