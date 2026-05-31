@@ -4,8 +4,8 @@ ingest/fetch_spills.py
 Fetches near-real-time storm overflow spill data from the Stream / Water UK
 National Storm Overflow Hub.
  
-Data is hosted as ArcGIS Online feature services — one per water company.
-No API key or registration required; these are publicly open.
+Data is a single unified ArcGIS Online feature service covering all companies
+in England and Wales. No API key or registration required; publicly open.
  
 Phase 5 will build this out fully. This file is a stub with working
 smoke-test functions for Phase 1.4.
@@ -15,30 +15,18 @@ import requests
 import json
  
 # ---------------------------------------------------------------------------
-# ArcGIS feature service endpoints — one per water company.
-# Each URL points to a hosted FeatureServer layer on ArcGIS Online.
-# Format: .../FeatureServer/0/query
+# Single unified Stream service — all ~14,000 overflows in one layer.
+# Confirmed URL from ArcGIS item 333c5c0600f94757b134b276ac4ad8b0.
+# Layer 0 = outfall locations with current spill status.
 # ---------------------------------------------------------------------------
  
-COMPANY_ENDPOINTS = {
-    "anglian":      "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/Anglian_Water_Storm_Overflow_Activity/FeatureServer/0",
-    "southern":     "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/Southern_Water_Storm_Overflow_Activity/FeatureServer/0",
-    "united_util":  "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/United_Utilities_Storm_Overflow_Activity/FeatureServer/0",
-    "severn_trent": "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/Severn_Trent_Storm_Overflow_Activity/FeatureServer/0",
-    "thames":       "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/Thames_Water_Storm_Overflow_Activity/FeatureServer/0",
-    "yorkshire":    "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/Yorkshire_Water_Storm_Overflow_Activity/FeatureServer/0",
-    "wessex":       "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/Wessex_Water_Storm_Overflow_Activity/FeatureServer/0",
-    "northumbrian": "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/Northumbrian_Water_Storm_Overflow_Activity/FeatureServer/0",
-    "southwest":    "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/South_West_Water_Storm_Overflow_Activity/FeatureServer/0",
-    # Welsh Water included in England hub where data exists
-    "welsh":        "https://services-eu1.arcgis.com/KTiEIlGFdtIE0S0h/arcgis/rest/services/Welsh_Water_Storm_Overflow_Activity/FeatureServer/0",
-}
+STREAM_SERVICE_BASE = (
+    "https://services3.arcgis.com/VCOY1atHWVcDlvlJ/arcgis/rest/services"
+    "/stream_service_outfall_locations_view/FeatureServer/0"
+)
  
-# NOTE: The exact service names above are educated guesses based on the
-# naming convention visible in the Stream portal item IDs. They MUST be
-# verified in Phase 1.4 (smoke test). If any 404, check:
-# https://portal-streamwaterdata.hub.arcgis.com/
-# and find the actual FeatureServer URL for each company's dataset.
+# To filter by company, use a WHERE clause on whatever company field exists.
+# The smoke test will reveal the actual field names — we don't know them yet.
  
  
 def query_layer(base_url: str, where: str = "1=1", out_fields: str = "*",
@@ -69,28 +57,26 @@ def query_layer(base_url: str, where: str = "1=1", out_fields: str = "*",
     return resp.json()
  
  
-def smoke_test(company: str = "anglian") -> None:
+def smoke_test() -> None:
     """
-    Phase 1.4 smoke test. Queries 2 records from one company's feed
+    Phase 1.4 smoke test. Queries 2 records from the unified Stream service
     and prints the result so we can confirm the shape of the data.
  
     Run from the repo root:
         python -c "from ingest.fetch_spills import smoke_test; smoke_test()"
     """
-    print(f"\n--- Smoke test: {company} ---")
-    base_url = COMPANY_ENDPOINTS[company]
+    print("\n--- Smoke test: Stream unified service ---")
+    base_url = STREAM_SERVICE_BASE
     print(f"URL: {base_url}")
  
     try:
         data = query_layer(base_url, result_record_count=2)
     except requests.HTTPError as e:
         print(f"HTTP error: {e}")
-        print("The service URL may need updating — check the Stream portal.")
         return
  
     if "error" in data:
         print(f"ArcGIS error: {data['error']}")
-        print("The service URL may need updating — check the Stream portal.")
         return
  
     features = data.get("features", [])
@@ -102,7 +88,7 @@ def smoke_test(company: str = "anglian") -> None:
         geom = features[0].get("geometry", {})
         print(f"  x={geom.get('x')}, y={geom.get('y')}")
     else:
-        print("No features returned — check the WHERE clause or endpoint.")
+        print("No features returned.")
  
  
 if __name__ == "__main__":
