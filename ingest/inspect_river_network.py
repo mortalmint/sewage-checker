@@ -2,11 +2,7 @@
 ingest/inspect_river_network.py
  
 Phase 1.5 / Phase 3 diagnostic tool.
-Inspects the OS Open Rivers GeoPackage and reports:
-  - What layers are in the file
-  - What fields each layer has
-  - Whether any field looks like flow direction
-  - A sample of records from the Dee catchment area
+Uses pyogrio's raw read() — no geopandas required.
  
 Run from repo root:
     python -m ingest.inspect_river_network
@@ -24,26 +20,23 @@ except ImportError:
 DATA_DIR = Path(__file__).parent.parent / "data"
 GPKG_PATH = DATA_DIR / "os_open_rivers.gpkg"
  
-# Rough bounding box for the Dee catchment (lon/lat, WGS84)
-# Covers the river from Bala Lake down to the estuary at Chester
-DEE_BBOX = (-3.6, 52.8, -2.8, 53.3)  # (minx, miny, maxx, maxy)
+# Dee catchment bounding box in EPSG:27700 (British National Grid, metres)
+# Converted from lon/lat (-3.6, 52.8, -2.8, 53.3)
+DEE_BBOX_BNG = (280000, 330000, 340000, 380000)  # (minx, miny, maxx, maxy)
  
  
 def inspect():
     if not GPKG_PATH.exists():
         print(f"File not found: {GPKG_PATH}")
-        print("Save OS Open Rivers GeoPackage to: data/os_open_rivers.gpkg")
         return
  
     print(f"\nFile: {GPKG_PATH} ({GPKG_PATH.stat().st_size / 1e6:.1f} MB)")
  
-    # List layers
     layers = pyogrio.list_layers(str(GPKG_PATH))
-    print(f"\nLayers in file ({len(layers)}):")
+    print(f"\nLayers ({len(layers)}):")
     for layer in layers:
         print(f"  - {layer[0]}  (geometry: {layer[1]})")
  
-    # Inspect each layer
     for layer_info in layers:
         layer_name = layer_info[0]
         print(f"\n{'='*60}")
@@ -51,56 +44,58 @@ def inspect():
         print('='*60)
  
         info = pyogrio.read_info(str(GPKG_PATH), layer=layer_name)
-        print(f"CRS: {info['crs']}")
-        print(f"Feature count: {info['features']}")
-        print(f"Geometry type: {info['geometry_type']}")
-        print(f"Bounds: {info['total_bounds']}")
+        print(f"CRS:            {info['crs']}")
+        print(f"Feature count:  {info['features']}")
+        print(f"Geometry type:  {info['geometry_type']}")
+        print(f"Bounds:         {info['total_bounds']}")
+        print(f"\nFields:")
+        for field_name, field_type in zip(info['fields'], info['dtypes']):
+            print(f"  {field_name:35s} {field_type}")
  
-        # Read a small sample to see field values
-        data = pyogrio.read_dataframe(str(GPKG_PATH), layer=layer_name, max_features=5)
-        print(f"\nFields ({len(data.columns)}):")
-        for col in data.columns:
-            if col == "geometry":
-                continue
-            dtype = data[col].dtype
-            sample = data[col].dropna().iloc[0] if not data[col].dropna().empty else "N/A"
-            print(f"  {col:35s} {str(dtype):12s}  e.g. {repr(sample)}")
- 
-        # Flag anything that looks like flow direction
+        # Flag flow-direction candidates
         flow_candidates = [
-            c for c in data.columns
-            if any(kw in c.lower() for kw in
-                   ["flow", "direction", "from", "to", "start", "end", "up", "down", "source", "mouth"])
+            f for f in info['fields']
+            if any(kw in f.lower() for kw in
+                   ["flow", "direct", "from", "to", "start", "end",
+                    "up", "down", "source", "mouth", "node", "link"])
         ]
         if flow_candidates:
-            print(f"\n  *** Possible flow-direction fields: {flow_candidates} ***")
-        else:
-            print("\n  (No obvious flow-direction fields found in this layer)")
+            print(f"\n  *** Possible flow/topology fields: {flow_candidates} ***")
  
-    # Dee catchment sample — find the line layer and clip to bbox
-    line_layers = [l[0] for l in layers if "line" in l[0].lower() or "watercourse" in l[0].lower() or l[1] in ("LineString", "MultiLineString", "Unknown")]
-    if not line_layers:
-        line_layers = [layers[0][0]]  # fall back to first layer
+        # Read 3 sample records using raw API
+        result = pyogrio.raw.read(
+            str(GPKG_PATH),
+            layer=layer_name,
+            max_features=3,
+        )
+        field_names = result[1]
+        field_data  = result[2]
+        print(f"\nSample records (first 3):")
+        for i in range(min(3, len(field_data[0]) if field_data else 0)):
+            print(f"  Record {i+1}:")
+            for fname, farray in zip(field_names, field_data):
+                print(f"    {fname:35s} {repr(farray[i])}")
  
+    # Dee bbox clip on watercourse_link
     print(f"\n{'='*60}")
-    print(f"Dee catchment sample (layer: {line_layers[0]})")
+    print(f"Dee catchment clip (watercourse_link)")
     print('='*60)
+    print(f"Bbox (BNG): {DEE_BBOX_BNG}")
  
-    minx, miny, maxx, maxy = DEE_BBOX
-    dee_data = pyogrio.read_dataframe(
+    result = pyogrio.raw.read(
         str(GPKG_PATH),
-        layer=line_layers[0],
-        bbox=(minx, miny, maxx, maxy),
+        layer="watercourse_link",
+        bbox=DEE_BBOX_BNG,
     )
-    print(f"Segments in Dee bounding box: {len(dee_data)}")
-    if len(dee_data) > 0:
-        print("\nFirst Dee record (non-geometry fields):")
-        row = dee_data.iloc[0].drop("geometry") if "geometry" in dee_data.columns else dee_data.iloc[0]
-        for field, val in row.items():
-            print(f"  {field:35s} {repr(val)}")
-    else:
-        print("No segments found in Dee bounding box.")
-        print("The file may use a different CRS — check the bounds printed above.")
+    field_names = result[1]
+    field_data  = result[2]
+    n_features  = len(field_data[0]) if field_data else 0
+    print(f"Segments in Dee bbox: {n_features}")
+ 
+    if n_features > 0:
+        print(f"\nFirst Dee segment:")
+        for fname, farray in zip(field_names, field_data):
+            print(f"  {fname:35s} {repr(farray[0])}")
  
  
 if __name__ == "__main__":
