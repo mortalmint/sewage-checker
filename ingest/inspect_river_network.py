@@ -21,8 +21,26 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 GPKG_PATH = DATA_DIR / "os_open_rivers.gpkg"
 
 # Dee catchment bounding box in EPSG:27700 (British National Grid, metres)
-# Converted from lon/lat (-3.6, 52.8, -2.8, 53.3)
-DEE_BBOX_BNG = (280000, 330000, 340000, 380000)  # (minx, miny, maxx, maxy)
+DEE_BBOX_BNG = (280000, 330000, 340000, 380000)
+
+
+def read_sample(gpkg_path, layer_name, bbox=None, max_features=3):
+    """Read a small sample, returning (field_names, rows) safely."""
+    kwargs = dict(layer=layer_name, max_features=max_features)
+    if bbox:
+        kwargs["bbox"] = bbox
+    result = pyogrio.raw.read(str(gpkg_path), **kwargs)
+    # result is (geometry, field_names, field_data, ...)
+    # field_names may be a list; field_data may be None or a list of arrays
+    field_names = result[1] if result[1] is not None else []
+    field_data  = result[2] if result[2] is not None else []
+    if len(field_names) == 0 or len(field_data) == 0:
+        return [], []
+    n = len(field_data[0])
+    rows = []
+    for i in range(min(max_features, n)):
+        rows.append({fname: farray[i] for fname, farray in zip(field_names, field_data)})
+    return field_names, rows
 
 
 def inspect():
@@ -52,7 +70,6 @@ def inspect():
         for field_name, field_type in zip(info['fields'], info['dtypes']):
             print(f"  {field_name:35s} {field_type}")
 
-        # Flag flow-direction candidates
         flow_candidates = [
             f for f in info['fields']
             if any(kw in f.lower() for kw in
@@ -62,37 +79,33 @@ def inspect():
         if flow_candidates:
             print(f"\n  *** Possible flow/topology fields: {flow_candidates} ***")
 
-        # Read 3 sample records using raw API
-        result = pyogrio.raw.read(
-            str(GPKG_PATH),
-            layer=layer_name,
-            max_features=3,
-        )
-        field_names = result[1]
-        field_data  = result[2]
-        print(f"\nSample records (first 3):")
-        for i in range(min(3, len(field_data[0]) if field_data is not None else 0)):
-            print(f"  Record {i+1}:")
-            for fname, farray in zip(field_names, field_data):
-                print(f"    {fname:35s} {repr(farray[i])}")
+        field_names, rows = read_sample(GPKG_PATH, layer_name)
+        if rows:
+            print(f"\nSample records (first {len(rows)}):")
+            for i, row in enumerate(rows):
+                print(f"  Record {i+1}:")
+                for fname, val in row.items():
+                    print(f"    {fname:35s} {repr(val)}")
+        else:
+            print("\n  (no attribute data returned for this layer)")
 
-    # Dee bbox clip on watercourse_link
+    # Dee bbox clip
     print(f"\n{'='*60}")
     print(f"Dee catchment clip (watercourse_link)")
     print('='*60)
     print(f"Bbox (BNG): {DEE_BBOX_BNG}")
 
-    result = pyogrio.raw.read(
-        str(GPKG_PATH),
-        layer="watercourse_link",
-        bbox=DEE_BBOX_BNG,
-    )
-    field_names = result[1]
-    field_data  = result[2]
-    n_features  = len(field_data[0]) if field_data else 0
-    print(f"Segments in Dee bbox: {n_features}")
+    info_wl = pyogrio.read_info(str(GPKG_PATH), layer="watercourse_link")
+    result = pyogrio.raw.read(str(GPKG_PATH), layer="watercourse_link", bbox=DEE_BBOX_BNG)
+    geoms       = result[0]
+    field_names = result[1] if result[1] is not None else []
+    field_data  = result[2] if result[2] is not None else []
 
-    if n_features > 0:
+    n = len(geoms) if geoms is not None else 0
+    print(f"Total segments (GB): {info_wl['features']}")
+    print(f"Segments in Dee bbox: {n}")
+
+    if n > 0 and field_names and field_data:
         print(f"\nFirst Dee segment:")
         for fname, farray in zip(field_names, field_data):
             print(f"  {fname:35s} {repr(farray[0])}")
