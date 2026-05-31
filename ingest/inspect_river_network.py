@@ -16,9 +16,9 @@ import sys
 from pathlib import Path
  
 try:
-    import geopandas as gpd
+    import pyogrio
 except ImportError:
-    print("geopandas not installed. Run: pip install geopandas")
+    print("pyogrio not installed. Run: pip install pyogrio")
     sys.exit(1)
  
 DATA_DIR = Path(__file__).parent.parent / "data"
@@ -38,63 +38,69 @@ def inspect():
     print(f"\nFile: {GPKG_PATH} ({GPKG_PATH.stat().st_size / 1e6:.1f} MB)")
  
     # List layers
-    import fiona
-    layers = fiona.listlayers(str(GPKG_PATH))
+    layers = pyogrio.list_layers(str(GPKG_PATH))
     print(f"\nLayers in file ({len(layers)}):")
     for layer in layers:
-        print(f"  - {layer}")
+        print(f"  - {layer[0]}  (geometry: {layer[1]})")
  
     # Inspect each layer
-    for layer in layers:
+    for layer_info in layers:
+        layer_name = layer_info[0]
         print(f"\n{'='*60}")
-        print(f"Layer: {layer}")
+        print(f"Layer: {layer_name}")
         print('='*60)
  
-        gdf = gpd.read_file(GPKG_PATH, layer=layer, rows=5)
-        print(f"CRS: {gdf.crs}")
-        print(f"Geometry type: {gdf.geom_type.unique().tolist()}")
-        print(f"Fields ({len(gdf.columns)}):")
-        for col in gdf.columns:
-            dtype = gdf[col].dtype
-            sample = gdf[col].dropna().iloc[0] if not gdf[col].dropna().empty else "N/A"
-            print(f"  {col:35s} {str(dtype):12s}  e.g. {sample!r}")
+        info = pyogrio.read_info(str(GPKG_PATH), layer=layer_name)
+        print(f"CRS: {info['crs']}")
+        print(f"Feature count: {info['features']}")
+        print(f"Geometry type: {info['geometry_type']}")
+        print(f"Bounds: {info['total_bounds']}")
+ 
+        # Read a small sample to see field values
+        data = pyogrio.read_dataframe(str(GPKG_PATH), layer=layer_name, max_features=5)
+        print(f"\nFields ({len(data.columns)}):")
+        for col in data.columns:
+            if col == "geometry":
+                continue
+            dtype = data[col].dtype
+            sample = data[col].dropna().iloc[0] if not data[col].dropna().empty else "N/A"
+            print(f"  {col:35s} {str(dtype):12s}  e.g. {repr(sample)}")
  
         # Flag anything that looks like flow direction
         flow_candidates = [
-            c for c in gdf.columns
-            if any(kw in c.lower() for kw in ["flow", "direction", "from", "to", "start", "end", "up", "down"])
+            c for c in data.columns
+            if any(kw in c.lower() for kw in
+                   ["flow", "direction", "from", "to", "start", "end", "up", "down", "source", "mouth"])
         ]
         if flow_candidates:
             print(f"\n  *** Possible flow-direction fields: {flow_candidates} ***")
         else:
             print("\n  (No obvious flow-direction fields found in this layer)")
  
-    # Now load just the Dee area from the first line/polyline layer
-    line_layers = []
-    for layer in layers:
-        gdf_sample = gpd.read_file(GPKG_PATH, layer=layer, rows=1)
-        if gdf_sample.geom_type.iloc[0] in ("LineString", "MultiLineString"):
-            line_layers.append(layer)
+    # Dee catchment sample — find the line layer and clip to bbox
+    line_layers = [l[0] for l in layers if "line" in l[0].lower() or "watercourse" in l[0].lower() or l[1] in ("LineString", "MultiLineString", "Unknown")]
+    if not line_layers:
+        line_layers = [layers[0][0]]  # fall back to first layer
  
-    if line_layers:
-        print(f"\n{'='*60}")
-        print(f"Dee catchment sample (layer: {line_layers[0]})")
-        print('='*60)
-        gdf_full = gpd.read_file(GPKG_PATH, layer=line_layers[0])
+    print(f"\n{'='*60}")
+    print(f"Dee catchment sample (layer: {line_layers[0]})")
+    print('='*60)
  
-        # Reproject to WGS84 if needed
-        if gdf_full.crs and gdf_full.crs.to_epsg() != 4326:
-            gdf_full = gdf_full.to_crs(epsg=4326)
- 
-        minx, miny, maxx, maxy = DEE_BBOX
-        dee = gdf_full.cx[minx:maxx, miny:maxy]
-        print(f"Total segments in GB: {len(gdf_full)}")
-        print(f"Segments in Dee bounding box: {len(dee)}")
-        if len(dee) > 0:
-            print("\nSample Dee record:")
-            print(dee.iloc[0].drop("geometry").to_string())
-        else:
-            print("No segments found in Dee bounding box — check the CRS or bbox.")
+    minx, miny, maxx, maxy = DEE_BBOX
+    dee_data = pyogrio.read_dataframe(
+        str(GPKG_PATH),
+        layer=line_layers[0],
+        bbox=(minx, miny, maxx, maxy),
+    )
+    print(f"Segments in Dee bounding box: {len(dee_data)}")
+    if len(dee_data) > 0:
+        print("\nFirst Dee record (non-geometry fields):")
+        row = dee_data.iloc[0].drop("geometry") if "geometry" in dee_data.columns else dee_data.iloc[0]
+        for field, val in row.items():
+            print(f"  {field:35s} {repr(val)}")
+    else:
+        print("No segments found in Dee bounding box.")
+        print("The file may use a different CRS — check the bounds printed above.")
  
  
 if __name__ == "__main__":
