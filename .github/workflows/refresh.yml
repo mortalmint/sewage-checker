@@ -1,0 +1,30 @@
+name: Refresh spill data
+ 
+on:
+  schedule:
+    # Every hour — spill data updates within ~60 minutes of an overflow operating
+    - cron: "5 * * * *"
+  workflow_dispatch:  # Allow manual trigger
+ 
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+ 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+ 
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+ 
+      - name: Fetch spill data
+        run: |
+          # Phase 5 will replace this with the real ingest command
+          echo "Spill data refresh placeholder — implement in Phase 5"
+          # python -m ingest.fetch_spills --update-all
+ 
+      # TODO Phase 8: trigger alert checks after data refresh
+ 
