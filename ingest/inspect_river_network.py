@@ -71,7 +71,7 @@ def inspect():
         field_names = result[1]
         field_data  = result[2]
         print(f"\nSample records (first 3):")
-        for i in range(min(3, len(field_data[0]) if field_data else 0)):
+        for i in range(min(3, len(field_data[0]) if field_data is not None else 0)):
             print(f"  Record {i+1}:")
             for fname, farray in zip(field_names, field_data):
                 print(f"    {fname:35s} {repr(farray[i])}")
